@@ -13,7 +13,6 @@
     <script>
         // Store state
         let conversationHistory = [];
-        let player = window.parent;
         
         // Function to handle messages from Storyline
         window.addEventListener('message', function(event) {
@@ -151,22 +150,30 @@
                     }
                 }
                 
-                // Send results back to Storyline
-                player.SetVar("CoachFeedback", cleanFeedback);
-                player.SetVar("ResponseScore", score);
-                player.SetVar("ReferencedLessons", referencedLessons);
-                player.SetVar("FeedbackReady", true);
-                player.SetVar("IsLoading", false);
+                // Send results back to Storyline using postMessage
+                window.parent.postMessage({
+                    action: 'feedback',
+                    feedback: cleanFeedback,
+                    score: score,
+                    lessons: referencedLessons,
+                    isReady: true,
+                    isLoading: false
+                }, '*');
                 
                 document.getElementById('status').textContent = 'Processing complete';
                 
             } catch (error) {
                 console.error('Error:', error);
-                player.SetVar("CoachFeedback", "Sorry, an error occurred while evaluating your response: " + error.message);
-                player.SetVar("ResponseScore", 0);
-                player.SetVar("ReferencedLessons", "");
-                player.SetVar("FeedbackReady", true);
-                player.SetVar("IsLoading", false);
+                
+                // Send error back to Storyline
+                window.parent.postMessage({
+                    action: 'error',
+                    feedback: "Sorry, an error occurred while evaluating your response: " + error.message,
+                    score: 0,
+                    lessons: "",
+                    isReady: true,
+                    isLoading: false
+                }, '*');
                 
                 document.getElementById('status').textContent = 'Error: ' + error.message;
             }
@@ -175,22 +182,24 @@
         // Function to reset conversation
         function resetConversation() {
             conversationHistory = [];
-            player.SetVar("ResponseScore", 0);
-            player.SetVar("CoachFeedback", "");
-            player.SetVar("ReferencedLessons", "");
-            player.SetVar("FeedbackReady", false);
+            
+            // Notify Storyline
+            window.parent.postMessage({
+                action: 'reset',
+                isReady: false,
+                isLoading: false
+            }, '*');
             
             document.getElementById('status').textContent = 'Conversation reset';
         }
         
         // Let Storyline know we're ready
         setTimeout(function() {
-            if (player && typeof player.SetVar === 'function') {
-                player.SetVar("APIReady", true);
-                document.getElementById('status').textContent = 'Claude Coach Ready';
-            } else {
-                document.getElementById('status').textContent = 'Cannot communicate with Storyline';
-            }
+            window.parent.postMessage({
+                action: 'ready',
+                isReady: true
+            }, '*');
+            document.getElementById('status').textContent = 'Claude Coach Ready';
         }, 1000);
     </script>
 </body>
