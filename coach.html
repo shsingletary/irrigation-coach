@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Claude Coach</title>
+    <style>
+        body { font-family: Arial; margin: 10px; }
+        #status { color: #555; }
+    </style>
+</head>
+<body>
+    <div id="status">Claude Coach Ready</div>
+    
+    <script>
+        // Store state
+        let conversationHistory = [];
+        let player = window.parent;
+        
+        // Function to handle messages from Storyline
+        window.addEventListener('message', function(event) {
+            const data = event.data;
+            
+            if (data.action === 'evaluate') {
+                evaluateResponse(data.scenario, data.response);
+            } else if (data.action === 'reset') {
+                resetConversation();
+            }
+        });
+        
+        // Using a CORS proxy for API calls
+        const proxyUrl = "https://corsproxy.io/?";
+        const targetUrl = "https://api.anthropic.com/v1/messages";
+        
+        // Function to evaluate response
+        async function evaluateResponse(scenario, learnerResponse) {
+            document.getElementById('status').textContent = 'Processing...';
+            
+            try {
+                // Prepare messages
+                let messages = [
+                    {
+                        role: "system",
+                        content: `You are a coaching assistant for irrigation professionals based on the content in the IrrigationCoach project. 
+                        
+                        You must rate responses on a scale of 1-3:
+                        1 = Incorrect response (does not align with irrigation best practices)
+                        2 = Partially correct (contains some correct elements)
+                        3 = Fully correct (aligns well with irrigation best practices)
+                        
+                        VERY IMPORTANT: Always base your feedback on the specific content in the IrrigationCoach project. 
+                        For each piece of feedback, cite the specific lesson number and name where the information comes from.
+                        For example: "As explained in Lesson 3: Water Pressure Management..."
+                        
+                        Be constructive, encouraging, and primarily focused on the irrigation content from the project.`
+                    }
+                ];
+                
+                // Add conversation history
+                conversationHistory.forEach(item => {
+                    messages.push(item);
+                });
+                
+                // Add current question
+                if (conversationHistory.length === 0) {
+                    messages.push({
+                        role: "user",
+                        content: `I'm using the IrrigationCoach project to evaluate this response.
+                        
+                        Scenario: ${scenario}
+                        
+                        Learner Response: ${learnerResponse}
+                        
+                        Please evaluate this response based ONLY on the content in the IrrigationCoach project. Start with 'SCORE: [1/2/3]' followed by detailed feedback. Be sure to cite specific lessons (lesson number and name) from the IrrigationCoach project where the correct information can be found.`
+                    });
+                } else {
+                    messages.push({
+                        role: "user",
+                        content: `${learnerResponse}
+                        
+                        Remember to base your feedback only on the IrrigationCoach project content and cite specific lessons.`
+                    });
+                }
+                
+                // Call Claude API via proxy
+                const response = await fetch(proxyUrl + encodeURIComponent(targetUrl), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': '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',
+                        'anthropic-version': '2023-06-01'
+                    },
+                    body: JSON.stringify({
+                        model: "claude-3-7-sonnet-20250219",
+                        max_tokens: 1000,
+                        messages: messages
+                    })
+                });
+                
+                const data = await response.json();
+                const feedbackText = data.content[0].text;
+                
+                // Extract lesson references
+                const lessonRefs = [];
+                const lessonRegex = /Lesson\s+(\d+):\s+([^\.]+)/gi;
+                let match;
+                
+                while ((match = lessonRegex.exec(feedbackText)) !== null) {
+                    lessonRefs.push({
+                        number: match[1],
+                        name: match[2].trim()
+                    });
+                }
+                
+                // Process lesson references
+                let referencedLessons = "No specific lessons referenced";
+                
+                if (lessonRefs.length > 0) {
+                    const uniqueLessons = [];
+                    const lessonMap = {};
+                    
+                    lessonRefs.forEach(ref => {
+                        const key = `${ref.number}: ${ref.name}`;
+                        if (!lessonMap[key]) {
+                            lessonMap[key] = true;
+                            uniqueLessons.push(key);
+                        }
+                    });
+                    
+                    referencedLessons = uniqueLessons.join(", ");
+                }
+                
+                // Update conversation history
+                conversationHistory.push({
+                    role: "user",
+                    content: learnerResponse
+                });
+                
+                conversationHistory.push({
+                    role: "assistant",
+                    content: feedbackText
+                });
+                
+                // Process score
+                let score = 0;
+                let cleanFeedback = feedbackText;
+                
+                if (conversationHistory.length <= 2) {
+                    const scoreMatch = feedbackText.match(/SCORE:\s*(\d+)/i);
+                    if (scoreMatch) {
+                        score = parseInt(scoreMatch[1]);
+                        cleanFeedback = feedbackText.replace(/^SCORE:\s*\d+\s*\n/i, '').trim();
+                    }
+                }
+                
+                // Send results back to Storyline
+                player.SetVar("CoachFeedback", cleanFeedback);
+                player.SetVar("ResponseScore", score);
+                player.SetVar("ReferencedLessons", referencedLessons);
+                player.SetVar("FeedbackReady", true);
+                player.SetVar("IsLoading", false);
+                
+                document.getElementById('status').textContent = 'Processing complete';
+                
+            } catch (error) {
+                console.error('Error:', error);
+                player.SetVar("CoachFeedback", "Sorry, an error occurred while evaluating your response: " + error.message);
+                player.SetVar("ResponseScore", 0);
+                player.SetVar("ReferencedLessons", "");
+                player.SetVar("FeedbackReady", true);
+                player.SetVar("IsLoading", false);
+                
+                document.getElementById('status').textContent = 'Error: ' + error.message;
+            }
+        }
+        
+        // Function to reset conversation
+        function resetConversation() {
+            conversationHistory = [];
+            player.SetVar("ResponseScore", 0);
+            player.SetVar("CoachFeedback", "");
+            player.SetVar("ReferencedLessons", "");
+            player.SetVar("FeedbackReady", false);
+            
+            document.getElementById('status').textContent = 'Conversation reset';
+        }
+        
+        // Let Storyline know we're ready
+        setTimeout(function() {
+            if (player && typeof player.SetVar === 'function') {
+                player.SetVar("APIReady", true);
+                document.getElementById('status').textContent = 'Claude Coach Ready';
+            } else {
+                document.getElementById('status').textContent = 'Cannot communicate with Storyline';
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
